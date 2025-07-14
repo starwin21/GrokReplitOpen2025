@@ -1,0 +1,526 @@
+
+
+
+  
+  
+  Wimbledon Pong
+  
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #1b3c1f; /* Wimbledon dark green */
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+    }
+    canvas {
+      border: 8px solid #4b286d; /* Thicker Wimbledon purple border */
+      box-shadow: 0 0 0 4px #ffffff; /* White outer border for contrast */
+      background-color: #2e7d32; /* Grass court green */
+      image-rendering: pixelated; /* For retro SNES look */
+    }
+    #score {
+      position: absolute;
+      top: 20px;
+      width: 100%;
+      text-align: center;
+      font-size: 48px;
+      color: #ffffff;
+      text-shadow: 3px 3px #4b286d;
+    }
+    #stats {
+      position: absolute;
+      top: 80px;
+      width: 100%;
+      text-align: center;
+      font-size: 32px;
+      color: #ffffff;
+      text-shadow: 2px 2px #4b286d;
+    }
+    #ui {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #ffffff;
+      text-shadow: 2px 2px #4b286d;
+      font-size: 36px;
+      text-align: center;
+    }
+    #ui div {
+      margin: 10px;
+      padding: 10px;
+      cursor: pointer;
+    }
+    #ui .selected {
+      background-color: #4b286d;
+      color: #ffffff;
+    }
+    #ui .instructions {
+      position: absolute;
+      bottom: 20px;
+      font-size: 24px;
+      color: #c6ff00;
+    }
+  
+
+
+  0 - 0
+  Game 1 | P1 Wins: 0 | P2 Wins: 0
+  
+  
+  
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('score');
+    const statsDisplay = document.getElementById('stats');
+    const ui = document.getElementById('ui');
+
+<pre><code>// Game states
+const states = {
+  MENU: &#39;menu&#39;,
+  DIFFICULTY: &#39;difficulty&#39;,
+  PLAYING: &#39;playing&#39;,
+  PAUSED: &#39;paused&#39;,
+  GAME_OVER: &#39;game_over&#39;,
+  CELEBRATION: &#39;celebration&#39;,
+  REMATCH: &#39;rematch&#39;,
+  POST_WIN: &#39;post_win&#39;
+};
+let gameState = states.MENU;
+let selectedOption = 0;
+let gameMode = null;
+let difficulty = null;
+const maxScore = 10; // Reduced from 15
+let gameNumber = 1;
+let player1Wins = 0;
+let player2Wins = 0;
+let lastWinner = null;
+let gameOverTimer = null;
+
+// Game objects
+const ball = {
+  x: canvas.width / 2,
+  y: canvas.height / 2,
+  radius: 12,
+  speedX: 7,
+  speedY: 7,
+  color: &#39;#c6ff00&#39;, // Tennis ball yellow-green
+  trail: []
+};
+
+const paddle1 = {
+  x: 30,
+  y: canvas.height / 2 - 75,
+  width: 15,
+  height: 150,
+  speed: 10,
+  score: 0,
+  color: &#39;#d2b48c&#39; // Light wood grain (tan)
+};
+
+const paddle2 = {
+  x: canvas.width - 45,
+  y: canvas.height / 2 - 75,
+  width: 15,
+  height: 150,
+  speed: 10,
+  score: 0,
+  color: &#39;#8b5a2b&#39; // Darker wood grain (brown)
+};
+
+// Crowd animation state
+let crowdCheer = false;
+let crowdFrame = 0;
+const crowdFrameDelay = 8;
+let crowdFrameCounter = 0;
+const crowdFrames = 4;
+
+// Sound effects
+function playSound(frequency, duration) {
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const oscillator = audioCtx.createOscillator();
+  oscillator.type = &#39;square&#39;;
+  oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+  oscillator.connect(audioCtx.destination);
+  oscillator.start();
+  oscillator.stop(audioCtx.currentTime + duration);
+}
+
+// Keyboard controls
+const keys = {
+  w: false,
+  s: false,
+  ArrowUp: false,
+  ArrowDown: false,
+  p: false,
+  Enter: false,
+  Escape: false,
+  ArrowLeft: false,
+  ArrowRight: false
+};
+
+document.addEventListener(&#39;keydown&#39;, (e) =&gt; {
+  if (e.key in keys) keys[e.key] = true;
+});
+
+document.addEventListener(&#39;keyup&#39;, (e) =&gt; {
+  if (e.key in keys) keys[e.key] = false;
+});
+
+// Draw net
+function drawNet() {
+  ctx.fillStyle = &#39;#ffffff&#39;;
+  for (let y = 0; y &lt; canvas.height; y += 30) {
+    ctx.fillRect(canvas.width / 2 - 3, y, 6, 15);
+  }
+}
+
+// Draw crowd
+function drawCrowd() {
+  const crowdHeight = 75;
+  const spriteSize = 24;
+  ctx.fillStyle = &#39;#4b286d&#39;;
+  ctx.fillRect(0, 0, canvas.width, crowdHeight);
+  ctx.fillRect(0, canvas.height - crowdHeight, canvas.width, crowdHeight);
+
+  for (let x = 0; x &lt; canvas.width; x += spriteSize) {
+    const color = crowdCheer ? [&#39;#ffeb3b&#39;, &#39;#ffffff&#39;, &#39;#c6ff00&#39;, &#39;#ffeb3b&#39;][crowdFrame] : &#39;#ffffff&#39;;
+    ctx.fillStyle = color;
+    ctx.fillRect(x + 6, 15, 12, 12);
+    ctx.fillRect(x + 6, canvas.height - crowdHeight + 15, 12, 12);
+    ctx.fillStyle = crowdCheer ? &#39;#ffffff&#39; : &#39;#cccccc&#39;;
+    ctx.fillRect(x + 8, 17, 4, 4);
+    ctx.fillRect(x + 8, canvas.height - crowdHeight + 17, 4, 4);
+  }
+}
+
+// Draw center graphic
+function drawCenterGraphic() {
+  ctx.font = &#39;48px Courier New&#39;;
+  ctx.textAlign = &#39;center&#39;;
+  ctx.fillStyle = &#39;rgba(198, 255, 0, 0.3)&#39;; // Translucent yellow-green
+  ctx.fillText(&#39;Grok/Replit Open 2025&#39;, canvas.width / 2, canvas.height / 2);
+  ctx.strokeStyle = &#39;rgba(75, 40, 109, 0.5)&#39;; // Translucent Wimbledon purple outline
+  ctx.lineWidth = 2;
+  ctx.strokeText(&#39;Grok/Replit Open 2025&#39;, canvas.width / 2, canvas.height / 2);
+}
+
+// Update crowd animation
+function updateCrowd() {
+  if (crowdCheer) {
+    crowdFrameCounter++;
+    if (crowdFrameCounter &gt;= crowdFrameDelay) {
+      crowdFrame = (crowdFrame + 1) % crowdFrames;
+      crowdFrameCounter = 0;
+    }
+  } else {
+    crowdFrame = 0;
+    crowdFrameCounter = 0;
+  }
+}
+
+// AI for one-player mode
+function updateAI() {
+  if (gameMode === &#39;one&#39;) {
+    const targetY = ball.y - paddle2.height / 2;
+    let aiSpeed = difficulty === &#39;Amateur&#39; ? 6 : difficulty === &#39;Tour&#39; ? 8 : 10;
+    const error = difficulty === &#39;Amateur&#39; ? 50 : difficulty === &#39;Tour&#39; ? 25 : 0;
+    const adjustedTarget = targetY + (Math.random() * error - error / 2);
+    if (paddle2.y + paddle2.height / 2 &lt; adjustedTarget) {
+      paddle2.y += aiSpeed;
+    } else if (paddle2.y + paddle2.height / 2 &gt; adjustedTarget) {
+      paddle2.y -= aiSpeed;
+    }
+    if (paddle2.y &lt; 0) paddle2.y = 0;
+    if (paddle2.y &gt; canvas.height - paddle2.height) paddle2.y = canvas.height - paddle2.height;
+  }
+}
+
+// Reset game state for new match
+function resetGame() {
+  paddle1.score = 0;
+  paddle2.score = 0;
+  resetBall();
+  paddle1.y = canvas.height / 2 - 75;
+  paddle2.y = canvas.height / 2 - 75;
+  scoreDisplay.textContent = `0 - 0`;
+}
+
+// Update game state
+function update() {
+  if (gameState === states.PLAYING) {
+    // Move paddles (ensure they stay within visual field)
+    if (keys.w &amp;&amp; paddle1.y &gt; 0) paddle1.y = Math.max(0, paddle1.y - paddle1.speed);
+    if (keys.s &amp;&amp; paddle1.y &lt; canvas.height - paddle1.height) paddle1.y = Math.min(canvas.height - paddle1.height, paddle1.y + paddle1.speed);
+    if (gameMode === &#39;two&#39;) {
+      if (keys.ArrowUp &amp;&amp; paddle2.y &gt; 0) paddle2.y = Math.max(0, paddle2.y - paddle2.speed);
+      if (keys.ArrowDown &amp;&amp; paddle2.y &lt; canvas.height - paddle2.height) paddle2.y = Math.min(canvas.height - paddle2.height, paddle2.y + paddle2.speed);
+    } else {
+      updateAI();
+    }
+
+    // Move ball (ensure it stays within visual field)
+    ball.x += ball.speedX;
+    ball.y += ball.speedY;
+
+    // Update ball trail
+    ball.trail.push({ x: ball.x, y: ball.y });
+    if (ball.trail.length &gt; 5) ball.trail.shift();
+
+    // Ball collision with top and bottom (adjusted for visibility)
+    if (ball.y + ball.radius &gt; canvas.height - 8 || ball.y - ball.radius &lt; 8) { // Account for border thickness
+      ball.speedY = -ball.speedY;
+      ball.y = ball.y + ball.radius &gt; canvas.height - 8 ? canvas.height - 8 - ball.radius : 8 + ball.radius;
+      playSound(300, 0.1);
+    }
+
+    // Ball collision with paddles
+    if (
+      (ball.x - ball.radius &lt; paddle1.x + paddle1.width &amp;&amp;
+       ball.y &gt; paddle1.y &amp;&amp;
+       ball.y &lt; paddle1.y + paddle1.height) ||
+      (ball.x + ball.radius &gt; paddle2.x &amp;&amp;
+       ball.y &gt; paddle2.y &amp;&amp;
+       ball.y &lt; paddle2.y + paddle2.height)
+    ) {
+      ball.speedX = -ball.speedX * 1.05;
+      // Ensure ball stays within left/right bounds
+      if (ball.x - ball.radius &lt; paddle1.x + paddle1.width) ball.x = paddle1.x + paddle1.width + ball.radius;
+      if (ball.x + ball.radius &gt; paddle2.x) ball.x = paddle2.x - ball.radius;
+      playSound(400, 0.1);
+    }
+
+    // Score points (adjusted for border)
+    if (ball.x &lt; 8) {
+      paddle2.score++;
+      resetBall();
+      crowdCheer = true;
+      playSound(200, 0.3);
+    } else if (ball.x &gt; canvas.width - 8) {
+      paddle1.score++;
+      resetBall();
+      crowdCheer = true;
+      playSound(200, 0.3);
+    }
+
+    // Check for game end
+    if (paddle1.score &gt;= maxScore || paddle2.score &gt;= maxScore) {
+      lastWinner = paddle1.score &gt;= maxScore ? &#39;Player 1&#39; : gameMode === &#39;two&#39; ? &#39;Player 2&#39; : &#39;Computer&#39;;
+      if (paddle1.score &gt;= maxScore) player1Wins++;
+      else player2Wins++;
+      gameState = states.REMATCH;
+      selectedOption = 0;
+      crowdCheer = true;
+    }
+
+    // Update crowd
+    updateCrowd();
+
+    // Pause game
+    if (keys.p) {
+      gameState = states.PAUSED;
+      keys.p = false;
+    }
+
+    // Update stats
+    statsDisplay.textContent = `Game ${gameNumber} | P1 Wins: ${player1Wins} | P2 Wins: ${player2Wins}`;
+  } else if (gameState === states.PAUSED &amp;&amp; keys.p) {
+    gameState = states.PLAYING;
+    keys.p = false;
+  } else if (gameState === states.MENU) {
+    if (keys.ArrowUp &amp;&amp; selectedOption &gt; 0) {
+      selectedOption--;
+      playSound(500, 0.1);
+    }
+    if (keys.ArrowDown &amp;&amp; selectedOption &lt; 1) {
+      selectedOption++;
+      playSound(500, 0.1);
+    }
+    if (keys.Enter) {
+      gameMode = selectedOption === 0 ? &#39;one&#39; : &#39;two&#39;;
+      if (gameMode === &#39;one&#39;) {
+        gameState = states.DIFFICULTY;
+        selectedOption = 0;
+      } else {
+        gameState = states.PLAYING;
+        ui.innerHTML = &#39;&#39;;
+      }
+      keys.Enter = false;
+      playSound(600, 0.2);
+    }
+  } else if (gameState === states.DIFFICULTY) {
+    if (keys.ArrowUp &amp;&amp; selectedOption &gt; 0) {
+      selectedOption--;
+      playSound(500, 0.1);
+    }
+    if (keys.ArrowDown &amp;&amp; selectedOption &lt; 2) {
+      selectedOption++;
+      playSound(500, 0.1);
+    }
+    if (keys.Enter) {
+      difficulty = [&#39;Amateur&#39;, &#39;Tour&#39;, &#39;Pro&#39;][selectedOption];
+      gameState = states.PLAYING;
+      ui.innerHTML = &#39;&#39;;
+      keys.Enter = false;
+      playSound(600, 0.2);
+    }
+  } else if (gameState === states.REMATCH) {
+    if (keys.ArrowUp &amp;&amp; selectedOption &gt; 0) {
+      selectedOption--;
+      playSound(500, 0.1);
+    }
+    if (keys.ArrowDown &amp;&amp; selectedOption &lt; 1) {
+      selectedOption++;
+      playSound(500, 0.1);
+    }
+    if (keys.Enter) {
+      if (selectedOption === 0) {
+        gameState = states.POST_WIN;
+        setTimeout(() =&gt; {
+          gameState = states.PLAYING;
+          gameNumber++;
+          resetGame();
+          ui.innerHTML = &#39;&#39;;
+        }, 2000);
+      } else {
+        gameState = states.MENU;
+        selectedOption = 0;
+        gameNumber = 1;
+        player1Wins = 0;
+        player2Wins = 0;
+        resetGame();
+      }
+      keys.Enter = false;
+      playSound(600, 0.2);
+    }
+  } else if (gameState === states.GAME_OVER) {
+    if (!gameOverTimer) {
+      gameOverTimer = setTimeout(() =&gt; {
+        gameState = states.MENU;
+        selectedOption = 0;
+        gameNumber = 1;
+        player1Wins = 0;
+        player2Wins = 0;
+        resetGame();
+        gameOverTimer = null;
+        ui.innerHTML = &#39;&#39;;
+      }, 5000);
+    }
+  }
+
+  // Game over on Escape
+  if (keys.Escape &amp;&amp; gameState !== states.GAME_OVER) {
+    gameState = states.GAME_OVER;
+    keys.Escape = false;
+    crowdCheer = false;
+    playSound(150, 0.5);
+  }
+}
+
+// Reset ball
+function resetBall() {
+  ball.x = canvas.width / 2;
+  ball.y = canvas.height / 2;
+  ball.speedX = (Math.random() &gt; 0.5 ? 7 : -7) * (Math.random() * 0.5 + 0.75);
+  ball.speedY = (Math.random() &gt; 0.5 ? 7 : -7) * (Math.random() * 0.5 + 0.75);
+  ball.trail = [];
+  setTimeout(() =&gt; { crowdCheer = false; }, 1000);
+}
+
+// Draw game
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawCrowd();
+  drawNet();
+  drawCenterGraphic();
+
+  if (gameState === states.PLAYING || gameState === states.PAUSED) {
+    // Draw paddles
+    ctx.fillStyle = paddle1.color;
+    ctx.fillRect(paddle1.x, paddle1.y, paddle1.width, paddle1.height);
+    ctx.fillStyle = paddle2.color;
+    ctx.fillRect(paddle2.x, paddle2.y, paddle2.width, paddle2.height);
+
+    // Draw ball trail
+    ball.trail.forEach((pos, i) =&gt; {
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, ball.radius * (0.5 + 0.1 * i), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(198, 255, 0, ${0.2 * (i / ball.trail.length)})`;
+      ctx.fill();
+      ctx.closePath();
+    });
+
+    // Draw ball
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+    ctx.fillStyle = ball.color;
+    ctx.fill();
+    ctx.closePath();
+
+    // Update score
+    scoreDisplay.textContent = `${paddle1.score} - ${paddle2.score}`;
+
+    // Draw pause message
+    if (gameState === states.PAUSED) {
+      ctx.fillStyle = &#39;#ffffff&#39;;
+      ctx.font = &#39;64px Courier New&#39;;
+      ctx.textAlign = &#39;center&#39;;
+      ctx.fillText(&#39;Paused&#39;, canvas.width / 2, canvas.height / 2);
+    }
+  } else if (gameState === states.MENU) {
+    ui.innerHTML = `
+      &lt;div class=&quot;${selectedOption === 0 ? &#39;selected&#39; : &#39;&#39;}&quot;&gt;One Player&lt;/div&gt;
+      &lt;div class=&quot;${selectedOption === 1 ? &#39;selected&#39; : &#39;&#39;}&quot;&gt;Two Players&lt;/div&gt;
+      &lt;div class=&quot;instructions&quot;&gt;
+        Player 1: W (Up), S (Down), P (Pause)${selectedOption === 1 ? &#39;&lt;br&gt;Player 2: Arrow Up, Arrow Down&#39; : &#39;&#39;}
+      &lt;/div&gt;
+    `;
+    statsDisplay.textContent = `Game ${gameNumber} | P1 Wins: ${player1Wins} | P2 Wins: ${player2Wins}`;
+  } else if (gameState === states.DIFFICULTY) {
+    ui.innerHTML = `
+      &lt;div class=&quot;${selectedOption === 0 ? &#39;selected&#39; : &#39;&#39;}&quot;&gt;Amateur&lt;/div&gt;
+      &lt;div class=&quot;${selectedOption === 1 ? &#39;selected&#39; : &#39;&#39;}&quot;&gt;Tour&lt;/div&gt;
+      &lt;div class=&quot;${selectedOption === 2 ? &#39;selected&#39; : &#39;&#39;}&quot;&gt;Pro&lt;/div&gt;
+      &lt;div class=&quot;instructions&quot;&gt;
+        Player 1: W (Up), S (Down), P (Pause)
+      &lt;/div&gt;
+    `;
+  } else if (gameState === states.REMATCH) {
+    ui.innerHTML = `
+      &lt;div&gt;Do you want another match?&lt;/div&gt;
+      &lt;div class=&quot;${selectedOption === 0 ? &#39;selected&#39; : &#39;&#39;}&quot;&gt;Yes&lt;/div&gt;
+      &lt;div class=&quot;${selectedOption === 1 ? &#39;selected&#39; : &#39;&#39;}&quot;&gt;No&lt;/div&gt;
+    `;
+    scoreDisplay.textContent = `${paddle1.score} - ${paddle2.score}`;
+  } else if (gameState === states.POST_WIN) {
+    ui.innerHTML = `
+      &lt;div&gt;Good job, ${lastWinner}!&lt;/div&gt;
+    `;
+    scoreDisplay.textContent = `${paddle1.score} - ${paddle2.score}`;
+  } else if (gameState === states.GAME_OVER) {
+    ui.innerHTML = `
+      &lt;div&gt;Game Over&lt;/div&gt;
+    `;
+    scoreDisplay.textContent = `${paddle1.score} - ${paddle2.score}`;
+  }
+}
+
+// Game loop
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// Start game
+resetBall();
+gameLoop();
+</code></pre>
+<p>  
+
